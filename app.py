@@ -54,13 +54,22 @@ def is_valid_url(url: str) -> bool:
     return bool(re.match(r'^https?://', url.strip()))
 
 
+# ── Args communs injectés dans chaque appel yt-dlp ──
+# android,web : contourne le blocage de formats YouTube sur certaines vidéos
+YTDLP_BASE_ARGS = [
+    "--extractor-args", "youtube:player_client=android,web",
+    "--no-check-formats",
+]
+
 def run_ytdlp(args: list) -> tuple[str, str, int]:
     """Lance yt-dlp et retourne (stdout, stderr, returncode)."""
+    base = []
     if os.path.exists(COOKIES_PATH):
-        args = ["--cookies", COOKIES_PATH] + args
+        base += ["--cookies", COOKIES_PATH]
+    base += YTDLP_BASE_ARGS
 
     result = subprocess.run(
-        ["yt-dlp"] + args,
+        ["yt-dlp"] + base + args,
         capture_output=True, text=True, timeout=120
     )
     return result.stdout, result.stderr, result.returncode
@@ -182,13 +191,7 @@ def download():
         else:
             # ── FIX : sélecteur robuste avec fallbacks successifs ──
             args += [
-                "-f",
-                (
-                    "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]"
-                    "/bestvideo[height<=1080]+bestaudio"
-                    "/best[height<=1080]"
-                    "/best"
-                ),
+                "-f", "bv*+ba/b",
                 "--merge-output-format", "mp4",
             ]
 
