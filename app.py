@@ -13,7 +13,6 @@ COOKIES_PATH = "/tmp/yt_cookies.txt"
 
 def setup_cookies():
     import base64
-    # Essaie d'abord la version base64
     cookies_b64 = os.environ.get("YOUTUBE_COOKIES_B64", "")
     cookies_raw = os.environ.get("YOUTUBE_COOKIES", "")
 
@@ -57,7 +56,6 @@ def is_valid_url(url: str) -> bool:
 
 def run_ytdlp(args: list) -> tuple[str, str, int]:
     """Lance yt-dlp et retourne (stdout, stderr, returncode)."""
-    # Ajoute les cookies si disponibles
     if os.path.exists(COOKIES_PATH):
         args = ["--cookies", COOKIES_PATH] + args
 
@@ -119,12 +117,29 @@ def get_info():
     except json.JSONDecodeError:
         return jsonify({"error": "Réponse yt-dlp invalide"}), 500
 
+    # ── FIX : extraire les vrais formats disponibles ──
+    formats = []
+    for f in info.get("formats", []):
+        vcodec = f.get("vcodec", "none")
+        acodec = f.get("acodec", "none")
+        # Ignorer les formats sans flux valide
+        if vcodec == "none" and acodec == "none":
+            continue
+        formats.append({
+            "format_id": f.get("format_id"),
+            "ext":       f.get("ext"),
+            "height":    f.get("height"),
+            "vcodec":    vcodec,
+            "acodec":    acodec,
+            "filesize":  f.get("filesize") or f.get("filesize_approx"),
+        })
+
     return jsonify({
         "title":     info.get("title", ""),
         "thumbnail": info.get("thumbnail", ""),
         "duration":  info.get("duration_string", ""),
         "uploader":  info.get("uploader", ""),
-        "formats":   []   # yt-dlp choisit automatiquement le meilleur format
+        "formats":   formats,
     })
 
 
@@ -134,14 +149,13 @@ def download():
     Télécharge et renvoie le fichier directement.
     Body JSON : {
         "url": "https://...",
-        "mode": "auto" | "audio" | "mute",
-        "format_id": "137+140"   // optionnel
+        "mode": "auto" | "audio" | "mute"
     }
+    Note : ne pas passer format_id, le backend choisit selon le mode.
     """
     data = request.get_json(silent=True) or {}
-    url       = data.get("url", "").strip()
-    mode      = data.get("mode", "auto")
-    format_id = data.get("format_id", "")
+    url  = data.get("url", "").strip()
+    mode = data.get("mode", "auto")
 
     if not url or not is_valid_url(url):
         return jsonify({"error": "URL invalide"}), 400
@@ -149,7 +163,6 @@ def download():
     with tempfile.TemporaryDirectory() as tmpdir:
         output_template = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-        # Construction des arguments yt-dlp
         args = [
             "--no-playlist",
             "--no-warnings",
@@ -157,12 +170,27 @@ def download():
         ]
 
         if mode == "audio":
-            args += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3"]
+            args += [
+                "-f", "bestaudio/best",
+                "-x", "--audio-format", "mp3",
+            ]
         elif mode == "mute":
-            args += ["-f", "bestvideo/best", "--no-audio"]
+            args += [
+                "-f", "bestvideo[ext=mp4]/bestvideo/best",
+                "--no-audio",
+            ]
         else:
-            # auto : yt-dlp choisit le meilleur format disponible
-            args += ["-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "--merge-output-format", "mp4"]
+            # ── FIX : sélecteur robuste avec fallbacks successifs ──
+            args += [
+                "-f",
+                (
+                    "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]"
+                    "/bestvideo[height<=1080]+bestaudio"
+                    "/best[height<=1080]"
+                    "/best"
+                ),
+                "--merge-output-format", "mp4",
+            ]
 
         args.append(url)
 
@@ -172,7 +200,6 @@ def download():
             msg = stderr.strip().splitlines()[-1] if stderr.strip() else "Echec du téléchargement"
             return jsonify({"error": msg}), 500
 
-        # Trouve le fichier produit
         files = [f for f in os.listdir(tmpdir) if not f.startswith(".")]
         if not files:
             return jsonify({"error": "Aucun fichier généré"}), 500
@@ -180,12 +207,14 @@ def download():
         filepath = os.path.join(tmpdir, files[0])
         filename = files[0]
 
-        # Détecte le mimetype
         ext = filename.rsplit(".", 1)[-1].lower()
         mimetypes = {
-            "mp4": "video/mp4", "webm": "video/webm",
-            "mkv": "video/x-matroska", "mp3": "audio/mpeg",
-            "m4a": "audio/mp4", "opus": "audio/opus",
+            "mp4":  "video/mp4",
+            "webm": "video/webm",
+            "mkv":  "video/x-matroska",
+            "mp3":  "audio/mpeg",
+            "m4a":  "audio/mp4",
+            "opus": "audio/opus",
         }
         mime = mimetypes.get(ext, "application/octet-stream")
 
