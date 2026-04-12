@@ -94,15 +94,6 @@
   @keyframes bounce{from{transform:translateY(0)}to{transform:translateY(5px)}}
   .field-err{font-size:16px;color:var(--red);font-weight:600;min-height:22px;margin-bottom:10px;display:flex;align-items:center;gap:5px}
 
-  /* Picker */
-  .picker{margin-bottom:14px}
-  .picker-title{font-size:18px;font-weight:700;margin-bottom:8px}
-  .picker-grid{display:flex;flex-direction:column;gap:8px}
-  .picker-item{display:flex;align-items:center;justify-content:space-between;border:2px solid var(--ink);border-radius:var(--r-sm);padding:8px 14px;background:var(--paper);gap:10px}
-  .picker-label{font-size:17px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .picker-dl{font-family:var(--font);font-size:15px;font-weight:700;background:var(--teal);color:var(--ink);border:2px solid var(--ink);border-radius:var(--r-sm);padding:4px 12px;cursor:pointer;box-shadow:2px 2px 0 var(--ink);white-space:nowrap;transition:transform .15s,box-shadow .15s}
-  .picker-dl:hover{transform:translate(-1px,-1px);box-shadow:var(--sh)}
-
   /* Modes */
   .modes-lbl{font-size:16px;color:var(--muted);font-weight:600;margin-bottom:8px}
   .modes-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
@@ -232,11 +223,6 @@
 
         <p class="field-err" id="url-err" role="alert" aria-live="polite"></p>
 
-        <div class="picker" id="pickerZone" hidden>
-          <p class="picker-title">📂 choisir un élément :</p>
-          <div class="picker-grid" id="pickerGrid"></div>
-        </div>
-
         <p class="modes-lbl" id="ml">format :</p>
         <div class="modes-row" role="group" aria-labelledby="ml">
           <button class="mode-btn" aria-pressed="true"  id="m-auto"  onclick="setMode('auto')">🔮 auto</button>
@@ -314,12 +300,8 @@
 <div id="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
-  // ════════════════════════════════════════════════
-  // 🔧 CONFIGURE TON URL BACKEND ICI après déploiement
-  // Ex: "https://leylay-backend.up.railway.app"
-  //     "https://leylay-backend.onrender.com"
-  // ════════════════════════════════════════════════
-const BACKEND = "https://web-production-71d01.up.railway.app";
+  const BACKEND = "https://web-production-71d01.up.railway.app";
+
   let mode = 'auto';
   const urlInp = document.getElementById('urlInp');
   const iw     = document.getElementById('iw');
@@ -330,7 +312,6 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
     iw.classList.toggle('has-val', v);
     urlInp.classList.toggle('has-val', v);
     if (v) clearErr();
-    hidePicker();
   });
   urlInp.addEventListener('keydown', e => { if (e.key === 'Enter') handleDl(); });
 
@@ -343,7 +324,7 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
         urlInp.classList.add('has-val');
         urlInp.focus();
         clearErr();
-        toast('Lien collé ! 📋','i');
+        toast('Lien collé ! 📋', 'i');
       }
     }
   });
@@ -351,13 +332,22 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
   // ── Helpers ──────────────────────────────────
   function clearInp() {
     urlInp.value = '';
-    urlInp.classList.remove('has-val','err');
+    urlInp.classList.remove('has-val', 'err');
     iw.classList.remove('has-val');
-    clearErr(); hidePicker(); urlInp.focus();
+    clearErr();
+    urlInp.focus();
   }
   function isURL(s) { try { return /^https?:/.test(new URL(s).protocol); } catch { return false; } }
-  function showErr(m) { document.getElementById('url-err').textContent='⚠️ '+m; urlInp.classList.add('err'); urlInp.setAttribute('aria-invalid','true'); }
-  function clearErr() { document.getElementById('url-err').textContent=''; urlInp.classList.remove('err'); urlInp.removeAttribute('aria-invalid'); }
+  function showErr(m) {
+    document.getElementById('url-err').textContent = '⚠️ ' + m;
+    urlInp.classList.add('err');
+    urlInp.setAttribute('aria-invalid', 'true');
+  }
+  function clearErr() {
+    document.getElementById('url-err').textContent = '';
+    urlInp.classList.remove('err');
+    urlInp.removeAttribute('aria-invalid');
+  }
 
   function setBtnState(loading) {
     const btn = document.getElementById('dlBtn');
@@ -367,103 +357,60 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
     document.getElementById('dlLabel').textContent = loading ? 'chargement…' : 'télécharger';
   }
 
-  // ── Picker ────────────────────────────────────
-  function showPicker(formats) {
-    const z = document.getElementById('pickerZone');
-    const g = document.getElementById('pickerGrid');
-    g.innerHTML = '';
-    formats.forEach(f => {
-      const d = document.createElement('div');
-      d.className = 'picker-item';
-      d.innerHTML = `
-        <span class="picker-label">${f.label}</span>
-        <button class="picker-dl" onclick="downloadFormat(${JSON.stringify(f.id)})">📥 télécharger</button>`;
-      g.appendChild(d);
-    });
-    z.removeAttribute('hidden');
-  }
-  function hidePicker() {
-    document.getElementById('pickerZone').setAttribute('hidden','');
-    document.getElementById('pickerGrid').innerHTML = '';
-  }
+  // ── Handler principal ─────────────────────────
+  async function handleDl() {
+    const val = urlInp.value.trim();
+    if (!val)        { showErr("colle d'abord un lien !"); urlInp.focus(); return; }
+    if (!isURL(val)) { showErr('ce lien ne semble pas valide…'); urlInp.focus(); return; }
+    clearErr();
+    setBtnState(true);
 
-  // ── Téléchargement direct via backend ─────────
-  async function downloadFormat(formatId) {
-    const url = urlInp.value.trim();
-    toast('⏬ téléchargement en cours…','i');
     try {
-      const res = await fetch(`${BACKEND}/download`, {
-        method: 'POST',
+      // 1. /info pour récupérer le titre (toast) — optionnel
+      try {
+        const infoRes = await fetch(`${BACKEND}/info`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ url: val })
+        });
+        if (infoRes.ok) {
+          const info = await infoRes.json();
+          if (info.title) {
+            const t = info.title;
+            toast('🎬 ' + t.slice(0, 40) + (t.length > 40 ? '…' : ''), 'i');
+          }
+        }
+      } catch (_) {
+        // /info a échoué, on continue quand même
+      }
+
+      // 2. /download — le backend choisit le format selon le mode
+      toast('⏬ téléchargement en cours…', 'i');
+      const dlRes = await fetch(`${BACKEND}/download`, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, mode, format_id: formatId })
+        body:    JSON.stringify({ url: val, mode })
+        // ⚠️ NE PAS passer format_id — le backend gère selon le mode
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showErr(err.error || 'Erreur serveur');
+
+      if (!dlRes.ok) {
+        const err = await dlRes.json().catch(() => ({}));
+        showErr(err.error || 'Erreur lors du téléchargement');
         return;
       }
-      // Récupère le nom depuis les headers
-      const cd   = res.headers.get('Content-Disposition') || '';
+
+      // 3. Déclenche le téléchargement dans le navigateur
+      const cd    = dlRes.headers.get('Content-Disposition') || '';
       const match = cd.match(/filename\*?=["']?(?:UTF-8'')?([^"';\n]+)/i);
       const name  = match ? decodeURIComponent(match[1]) : 'leylay';
 
-      const blob = await res.blob();
+      const blob = await dlRes.blob();
       const a    = document.createElement('a');
       a.href     = URL.createObjectURL(blob);
       a.download = name;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(a.href);
-      toast('✅ téléchargement lancé !','s');
-    } catch (e) {
-      showErr('Impossible de joindre le serveur.');
-    }
-  }
-
-  // ── Handler principal ─────────────────────────
-  async function handleDl() {
-    const val = urlInp.value.trim();
-    if (!val)         { showErr("colle d'abord un lien !"); urlInp.focus(); return; }
-    if (!isURL(val))  { showErr('ce lien ne semble pas valide…'); urlInp.focus(); return; }
-    clearErr(); hidePicker(); setBtnState(true);
-
-    try {
-      // 1. Récupère les infos + formats depuis le backend
-      const res = await fetch(`${BACKEND}/info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: val })
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showErr(err.error || 'Erreur serveur ('+res.status+')');
-        return;
-      }
-
-      const data = await res.json();
-
-      if (data.title) {
-        toast('🎬 ' + data.title.slice(0, 40) + (data.title.length > 40 ? '…' : ''), 'i');
-      }
-
-      if (data.formats && data.formats.length > 0) {
-        // Mode audio : filtre seulement les formats audio
-        const formats = mode === 'audio'
-          ? data.formats.filter(f => f.type === 'audio')
-          : data.formats;
-
-        if (formats.length === 1) {
-          // Un seul format → télécharge directement
-          downloadFormat(formats[0].id);
-        } else {
-          // Plusieurs formats → affiche le picker
-          showPicker(formats);
-          toast('📂 choisis la qualité !', 'i');
-        }
-      } else {
-        // Aucun format détecté → laisse yt-dlp choisir automatiquement
-        downloadFormat('');
-      }
+      toast('✅ téléchargement lancé !', 's');
 
     } catch (e) {
       showErr('Impossible de joindre le serveur. Vérifie ta connexion.');
@@ -475,35 +422,35 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
   // ── Mode & tabs ───────────────────────────────
   function setMode(m) {
     mode = m;
-    ['auto','audio','mute'].forEach(id =>
-      document.getElementById('m-'+id).setAttribute('aria-pressed', String(id===m))
+    ['auto', 'audio', 'mute'].forEach(id =>
+      document.getElementById('m-' + id).setAttribute('aria-pressed', String(id === m))
     );
   }
 
   function switchTab(t) {
-    ['save','remux'].forEach(id => {
-      document.getElementById('tb-'+id).setAttribute('aria-selected', String(id===t));
-      const p = document.getElementById('p-'+id);
-      id===t ? p.removeAttribute('hidden') : p.setAttribute('hidden','');
+    ['save', 'remux'].forEach(id => {
+      document.getElementById('tb-' + id).setAttribute('aria-selected', String(id === t));
+      const p = document.getElementById('p-' + id);
+      id === t ? p.removeAttribute('hidden') : p.setAttribute('hidden', '');
     });
   }
 
-  function handleFile(inp) { if (inp.files?.[0]) toast('📂 '+inp.files[0].name+' prêt !','i'); }
+  function handleFile(inp) { if (inp.files?.[0]) toast('📂 ' + inp.files[0].name + ' prêt !', 'i'); }
 
   // ── Drag & drop ───────────────────────────────
   const dz = document.getElementById('dz');
-  ['dragenter','dragover'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('drag-over'); }));
-  ['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => {
+  ['dragenter', 'dragover'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); dz.classList.add('drag-over'); }));
+  ['dragleave', 'drop'].forEach(e => dz.addEventListener(e, ev => {
     ev.preventDefault(); dz.classList.remove('drag-over');
-    if (e==='drop' && ev.dataTransfer.files[0]) toast('📂 '+ev.dataTransfer.files[0].name+' prêt !','i');
+    if (e === 'drop' && ev.dataTransfer.files[0]) toast('📂 ' + ev.dataTransfer.files[0].name + ' prêt !', 'i');
   }));
-  dz.addEventListener('keydown', e => { if (e.key==='Enter'||e.key===' ') { e.preventDefault(); document.getElementById('fileInp').click(); } });
+  dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('fileInp').click(); } });
 
   // ── Airtel Money ──────────────────────────────
   function copyNum() {
     const num = '077939828';
     const icon = document.getElementById('copyIcon');
-    const done = () => { icon.textContent='✅'; toast('Numéro copié ! 📋','s'); setTimeout(()=>{ icon.textContent='📋'; },2000); };
+    const done = () => { icon.textContent = '✅'; toast('Numéro copié ! 📋', 's'); setTimeout(() => { icon.textContent = '📋'; }, 2000); };
     navigator.clipboard?.writeText(num).then(done).catch(() => {
       const el = document.createElement('textarea');
       el.value = num; document.body.appendChild(el); el.select();
@@ -512,16 +459,16 @@ const BACKEND = "https://web-production-71d01.up.railway.app";
     });
   }
 
-  function scrollToAirtel() { document.getElementById('airtel').scrollIntoView({behavior:'smooth',block:'start'}); }
+  function scrollToAirtel() { document.getElementById('airtel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
   // ── Toast ─────────────────────────────────────
-  function toast(msg, type='s') {
+  function toast(msg, type = 's') {
     const r = document.getElementById('toast-region');
     const t = document.createElement('div');
-    t.className = 'toast '+ ({s:'ts',e:'te',i:'ti'}[type]||'ts');
+    t.className = 'toast ' + ({ s: 'ts', e: 'te', i: 'ti' }[type] || 'ts');
     t.textContent = msg;
     r.appendChild(t);
-    setTimeout(() => { t.classList.add('out'); t.addEventListener('animationend',()=>t.remove(),{once:true}); }, 3200);
+    setTimeout(() => { t.classList.add('out'); t.addEventListener('animationend', () => t.remove(), { once: true }); }, 3200);
   }
 </script>
 </body>
