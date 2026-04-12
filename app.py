@@ -8,8 +8,32 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 
-# Autorise ton domaine frontend ici (ou "*" pour tout autoriser)
-CORS(app, origins="*")
+# ── Cookies YouTube depuis variable d'environnement ──
+COOKIES_PATH = "/tmp/yt_cookies.txt"
+
+def setup_cookies():
+    cookies_env = os.environ.get("YOUTUBE_COOKIES", "")
+    if cookies_env:
+        with open(COOKIES_PATH, "w") as f:
+            f.write(cookies_env)
+        print("✅ Cookies YouTube chargés depuis variable d'environnement")
+    else:
+        print("⚠️ Pas de cookies YouTube configurés")
+
+setup_cookies()
+
+CORS(app,
+     origins="*",
+     allow_headers=["Content-Type", "Accept"],
+     methods=["GET", "POST", "OPTIONS"]
+)
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"]  = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
 # ──────────────────────────────────────────
 # Utilitaires
@@ -21,6 +45,10 @@ def is_valid_url(url: str) -> bool:
 
 def run_ytdlp(args: list) -> tuple[str, str, int]:
     """Lance yt-dlp et retourne (stdout, stderr, returncode)."""
+    # Ajoute les cookies si disponibles
+    if os.path.exists(COOKIES_PATH):
+        args = ["--cookies", COOKIES_PATH] + args
+
     result = subprocess.run(
         ["yt-dlp"] + args,
         capture_output=True, text=True, timeout=120
