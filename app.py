@@ -176,14 +176,15 @@ def download():
         ]
 
         if format_id:
-            args += ["-f", format_id]
+            # Format spécifique choisi par l'utilisateur, avec fallback
+            args += ["-f", f"{format_id}/bestvideo+bestaudio/best"]
         elif mode == "audio":
-            args += ["-f", "bestaudio", "-x", "--audio-format", "mp3"]
+            args += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3"]
         elif mode == "mute":
-            args += ["-f", "bestvideo", "--no-audio"]
+            args += ["-f", "bestvideo/best", "--no-audio"]
         else:
-            # auto : meilleure qualité ≤ 1080p avec audio fusionné
-            args += ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]", "--merge-output-format", "mp4"]
+            # auto : essaie plusieurs combinaisons dans l'ordre
+            args += ["-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
 
         args.append(url)
 
