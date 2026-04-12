@@ -6,6 +6,10 @@ import re
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
+try:
+    subprocess.run(["yt-dlp", "-U"])
+except:
+    pass
 app = Flask(__name__)
 
 # ── Cookies YouTube depuis variable d'environnement ──
