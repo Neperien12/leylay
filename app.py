@@ -77,6 +77,22 @@ def health():
     return jsonify({"status": "ok", "service": "leylay-backend"})
 
 
+@app.route("/debug", methods=["POST"])
+def debug_formats():
+    """Route temporaire pour voir les formats bruts disponibles."""
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "URL manquante"}), 400
+
+    stdout, stderr, code = run_ytdlp(["--list-formats", "--no-playlist", url])
+    return jsonify({
+        "stdout": stdout,
+        "stderr": stderr,
+        "code": code
+    })
+
+
 @app.route("/info", methods=["POST"])
 def get_info():
     """
