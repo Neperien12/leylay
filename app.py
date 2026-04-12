@@ -12,11 +12,23 @@ app = Flask(__name__)
 COOKIES_PATH = "/tmp/yt_cookies.txt"
 
 def setup_cookies():
-    cookies_env = os.environ.get("YOUTUBE_COOKIES", "")
-    if cookies_env:
+    import base64
+    # Essaie d'abord la version base64
+    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_B64", "")
+    cookies_raw = os.environ.get("YOUTUBE_COOKIES", "")
+
+    if cookies_b64:
+        try:
+            decoded = base64.b64decode(cookies_b64).decode("utf-8")
+            with open(COOKIES_PATH, "w") as f:
+                f.write(decoded)
+            print("✅ Cookies YouTube chargés (base64)")
+        except Exception as e:
+            print(f"❌ Erreur décodage base64 : {e}")
+    elif cookies_raw:
         with open(COOKIES_PATH, "w") as f:
-            f.write(cookies_env)
-        print("✅ Cookies YouTube chargés depuis variable d'environnement")
+            f.write(cookies_raw)
+        print("✅ Cookies YouTube chargés (raw)")
     else:
         print("⚠️ Pas de cookies YouTube configurés")
 
