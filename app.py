@@ -103,47 +103,12 @@ def get_info():
     except json.JSONDecodeError:
         return jsonify({"error": "Réponse yt-dlp invalide"}), 500
 
-    # Extrait les formats utiles
-    formats = []
-    for f in info.get("formats", []):
-        ext  = f.get("ext", "")
-        vco  = f.get("vcodec", "none")
-        aco  = f.get("acodec", "none")
-        h    = f.get("height")
-        abr  = f.get("abr")
-        fid  = f.get("format_id", "")
-
-        if vco != "none" and h:
-            formats.append({
-                "id": fid,
-                "label": f"🎬 {h}p  ({ext.upper()})",
-                "type": "video",
-                "height": h,
-                "ext": ext
-            })
-        elif aco != "none" and vco == "none" and abr:
-            formats.append({
-                "id": fid,
-                "label": f"🎵 Audio {int(abr)}kbps ({ext.upper()})",
-                "type": "audio",
-                "abr": abr,
-                "ext": ext
-            })
-
-    # Déduplique par label
-    seen = set()
-    unique_formats = []
-    for f in sorted(formats, key=lambda x: x.get("height", x.get("abr", 0)), reverse=True):
-        if f["label"] not in seen:
-            seen.add(f["label"])
-            unique_formats.append(f)
-
     return jsonify({
         "title":     info.get("title", ""),
         "thumbnail": info.get("thumbnail", ""),
         "duration":  info.get("duration_string", ""),
         "uploader":  info.get("uploader", ""),
-        "formats":   unique_formats[:12]   # max 12 formats
+        "formats":   []   # yt-dlp choisit automatiquement le meilleur format
     })
 
 
@@ -175,16 +140,13 @@ def download():
             "-o", output_template,
         ]
 
-        if format_id:
-            # Format spécifique choisi par l'utilisateur, avec fallback
-            args += ["-f", f"{format_id}/bestvideo+bestaudio/best"]
-        elif mode == "audio":
+        if mode == "audio":
             args += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3"]
         elif mode == "mute":
             args += ["-f", "bestvideo/best", "--no-audio"]
         else:
-            # auto : essaie plusieurs combinaisons dans l'ordre
-            args += ["-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", "--merge-output-format", "mp4"]
+            # auto : yt-dlp choisit le meilleur format disponible
+            args += ["-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "--merge-output-format", "mp4"]
 
         args.append(url)
 
