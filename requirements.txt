@@ -1,3 +1,4 @@
 flask
 flask-cors
-pytubefix
+yt-dlp
+gunicorn
