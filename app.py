@@ -28,26 +28,50 @@ def is_valid_url(url: str) -> bool:
     return bool(re.match(r'^https?://', url.strip()))
 
 
+# Ordre des clients : ANDROID contourne le mieux les restrictions YouTube
+CLIENTS = ["ANDROID", "IOS", "MWEB", "WEB"]
+
+
 def make_yt(url: str) -> YouTube:
     """
-    Crée un objet YouTube sans aucun flow interactif (OAuth désactivé).
-    Essaie plusieurs clients dans l'ordre.
+    Retourne un objet YouTube sans déclencher de requête immédiate.
+    Le client est choisi au moment de l'appel effectif (streams, title…).
     """
-    clients = ["WEB", "ANDROID", "IOS"]
     last_err = None
-    for client in clients:
+    for client in CLIENTS:
+        try:
+            return YouTube(
+                url,
+                client=client,
+                use_oauth=False,
+                allow_oauth_cache=False,
+            )
+        except Exception as e:
+            last_err = e
+    raise last_err
+
+
+def fetch_yt(url: str):
+    """
+    Crée un YouTube et vérifie qu'on peut accéder aux streams.
+    Essaie chaque client jusqu'au premier qui répond sans 400/403.
+    """
+    last_err = None
+    for client in CLIENTS:
         try:
             yt = YouTube(
                 url,
                 client=client,
-                use_oauth=False,          # ← désactive OAuth (évite input() sur serveur)
-                allow_oauth_cache=False,  # ← pas de cache OAuth non plus
+                use_oauth=False,
+                allow_oauth_cache=False,
             )
-            _ = yt.title  # force la résolution pour détecter l'erreur tôt
-            return yt
+            # Accès léger pour valider que le client fonctionne
+            streams = yt.streams
+            if streams:
+                return yt
         except Exception as e:
             last_err = e
-    raise last_err
+    raise last_err or Exception("Aucun client disponible")
 
 
 def safe_filename(title: str, ext: str) -> str:
@@ -73,7 +97,7 @@ def get_info():
         return jsonify({"error": "URL invalide"}), 400
 
     try:
-        yt         = make_yt(url)
+        yt         = fetch_yt(url)
         duration_s = yt.length or 0
         duration   = f"{duration_s // 60}:{duration_s % 60:02d}"
 
@@ -98,7 +122,7 @@ def download():
         return jsonify({"error": "URL invalide"}), 400
 
     try:
-        yt    = make_yt(url)
+        yt    = fetch_yt(url)
         title = yt.title or "leylay"
 
         with tempfile.TemporaryDirectory() as tmpdir:
