@@ -1,9 +1,10 @@
 import os
 import re
+import json
+import subprocess
 import tempfile
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from pytubefix import YouTube
 
 app = Flask(__name__)
 
@@ -28,55 +29,24 @@ def is_valid_url(url: str) -> bool:
     return bool(re.match(r'^https?://', url.strip()))
 
 
-# Ordre des clients : ANDROID contourne le mieux les restrictions YouTube
-CLIENTS = ["ANDROID", "IOS", "MWEB", "WEB"]
+# Args injectés dans chaque appel yt-dlp pour contourner la détection bot
+YTDLP_BASE = [
+    "--extractor-args", "youtube:player_client=android,web",
+    "--no-check-formats",
+    "--no-warnings",
+]
 
 
-def make_yt(url: str) -> YouTube:
-    """
-    Retourne un objet YouTube sans déclencher de requête immédiate.
-    Le client est choisi au moment de l'appel effectif (streams, title…).
-    """
-    last_err = None
-    for client in CLIENTS:
-        try:
-            return YouTube(
-                url,
-                client=client,
-                use_oauth=False,
-                allow_oauth_cache=False,
-            )
-        except Exception as e:
-            last_err = e
-    raise last_err
+def run_ytdlp(args: list) -> tuple[str, str, int]:
+    result = subprocess.run(
+        ["yt-dlp"] + YTDLP_BASE + args,
+        capture_output=True, text=True, timeout=180
+    )
+    return result.stdout, result.stderr, result.returncode
 
 
-def fetch_yt(url: str):
-    """
-    Crée un YouTube et vérifie qu'on peut accéder aux streams.
-    Essaie chaque client jusqu'au premier qui répond sans 400/403.
-    """
-    last_err = None
-    for client in CLIENTS:
-        try:
-            yt = YouTube(
-                url,
-                client=client,
-                use_oauth=False,
-                allow_oauth_cache=False,
-            )
-            # Accès léger pour valider que le client fonctionne
-            streams = yt.streams
-            if streams:
-                return yt
-        except Exception as e:
-            last_err = e
-    raise last_err or Exception("Aucun client disponible")
-
-
-def safe_filename(title: str, ext: str) -> str:
-    name = re.sub(r'[\\/*?:"<>|]', '', title).strip()
-    return f"{name[:100]}.{ext}"
+def safe_filename(name: str) -> str:
+    return re.sub(r'[\\/*?:"<>|]', '', name).strip()[:100]
 
 
 # ──────────────────────────────────────────
@@ -96,24 +66,34 @@ def get_info():
     if not url or not is_valid_url(url):
         return jsonify({"error": "URL invalide"}), 400
 
-    try:
-        yt         = fetch_yt(url)
-        duration_s = yt.length or 0
-        duration   = f"{duration_s // 60}:{duration_s % 60:02d}"
+    stdout, stderr, code = run_ytdlp(["--dump-json", "--no-playlist", url])
 
-        return jsonify({
-            "title":     yt.title or "",
-            "thumbnail": yt.thumbnail_url or "",
-            "duration":  duration,
-            "uploader":  yt.author or "",
-            "formats":   [],
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    if code != 0:
+        msg = stderr.strip().splitlines()[-1] if stderr.strip() else "Erreur inconnue"
+        return jsonify({"error": msg}), 500
+
+    try:
+        info = json.loads(stdout)
+    except json.JSONDecodeError:
+        return jsonify({"error": "Réponse yt-dlp invalide"}), 500
+
+    duration_s = info.get("duration", 0) or 0
+    duration   = f"{int(duration_s) // 60}:{int(duration_s) % 60:02d}"
+
+    return jsonify({
+        "title":     info.get("title", ""),
+        "thumbnail": info.get("thumbnail", ""),
+        "duration":  duration,
+        "uploader":  info.get("uploader", ""),
+        "formats":   [],
+    })
 
 
 @app.route("/download", methods=["POST"])
 def download():
+    """
+    Body JSON : { "url": "...", "mode": "auto" | "audio" | "mute" }
+    """
     data = request.get_json(silent=True) or {}
     url  = data.get("url", "").strip()
     mode = data.get("mode", "auto")
@@ -121,56 +101,50 @@ def download():
     if not url or not is_valid_url(url):
         return jsonify({"error": "URL invalide"}), 400
 
-    try:
-        yt    = fetch_yt(url)
-        title = yt.title or "leylay"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_tpl = os.path.join(tmpdir, "%(title)s.%(ext)s")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        args = ["--no-playlist", "-o", output_tpl]
 
-            if mode == "audio":
-                stream = yt.streams.get_audio_only()
-                if not stream:
-                    return jsonify({"error": "Aucun flux audio disponible"}), 500
-                filepath = stream.download(output_path=tmpdir)
-                filename = safe_filename(title, "m4a")
-                mime     = "audio/mp4"
+        if mode == "audio":
+            args += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3"]
+        elif mode == "mute":
+            args += ["-f", "bestvideo[ext=mp4]/bestvideo/best", "--no-audio"]
+        else:
+            # bv*+ba : meilleur vidéo + meilleur audio, fallback sur best
+            args += ["-f", "bv*+ba/b", "--merge-output-format", "mp4"]
 
-            elif mode == "mute":
-                stream = (
-                    yt.streams
-                      .filter(only_video=True)
-                      .order_by("resolution")
-                      .last()
-                )
-                if not stream:
-                    return jsonify({"error": "Aucun flux vidéo disponible"}), 500
-                filepath = stream.download(output_path=tmpdir)
-                ext      = stream.subtype or "mp4"
-                filename = safe_filename(title, ext)
-                mime     = f"video/{ext}"
+        args.append(url)
 
-            else:  # auto
-                stream = yt.streams.get_highest_resolution()
-                if not stream:
-                    stream = yt.streams.filter(progressive=True).first()
-                if not stream:
-                    stream = yt.streams.first()
-                if not stream:
-                    return jsonify({"error": "Aucun flux disponible"}), 500
-                filepath = stream.download(output_path=tmpdir)
-                ext      = stream.subtype or "mp4"
-                filename = safe_filename(title, ext)
-                mime     = f"video/{ext}"
+        stdout, stderr, code = run_ytdlp(args)
 
-            return send_file(
-                filepath,
-                mimetype=mime,
-                as_attachment=True,
-                download_name=filename
-            )
+        if code != 0:
+            msg = stderr.strip().splitlines()[-1] if stderr.strip() else "Echec du téléchargement"
+            return jsonify({"error": msg}), 500
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        files = [f for f in os.listdir(tmpdir) if not f.startswith(".")]
+        if not files:
+            return jsonify({"error": "Aucun fichier généré"}), 500
+
+        filepath = os.path.join(tmpdir, files[0])
+        filename = files[0]
+        ext      = filename.rsplit(".", 1)[-1].lower()
+
+        mimetypes = {
+            "mp4":  "video/mp4",
+            "webm": "video/webm",
+            "mkv":  "video/x-matroska",
+            "mp3":  "audio/mpeg",
+            "m4a":  "audio/mp4",
+            "opus": "audio/opus",
+        }
+
+        return send_file(
+            filepath,
+            mimetype=mimetypes.get(ext, "application/octet-stream"),
+            as_attachment=True,
+            download_name=filename
+        )
 
 
 if __name__ == "__main__":
