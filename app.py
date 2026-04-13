@@ -29,21 +29,30 @@ def is_valid_url(url: str) -> bool:
 
 
 def make_yt(url: str) -> YouTube:
-    """Crée un objet YouTube avec les options qui contournent les restrictions."""
-    return YouTube(
-        url,
-        use_po_token=True,
-        use_oauth=False,
-        allow_oauth_cache=True,
-        client="WEB",
-    )
+    """
+    Crée un objet YouTube sans aucun flow interactif (OAuth désactivé).
+    Essaie plusieurs clients dans l'ordre.
+    """
+    clients = ["WEB", "ANDROID", "IOS"]
+    last_err = None
+    for client in clients:
+        try:
+            yt = YouTube(
+                url,
+                client=client,
+                use_oauth=False,          # ← désactive OAuth (évite input() sur serveur)
+                allow_oauth_cache=False,  # ← pas de cache OAuth non plus
+            )
+            _ = yt.title  # force la résolution pour détecter l'erreur tôt
+            return yt
+        except Exception as e:
+            last_err = e
+    raise last_err
 
 
 def safe_filename(title: str, ext: str) -> str:
-    """Nettoie le titre pour en faire un nom de fichier valide."""
     name = re.sub(r'[\\/*?:"<>|]', '', title).strip()
-    name = name[:100]
-    return f"{name}.{ext}"
+    return f"{name[:100]}.{ext}"
 
 
 # ──────────────────────────────────────────
@@ -57,10 +66,6 @@ def health():
 
 @app.route("/info", methods=["POST"])
 def get_info():
-    """
-    Retourne les métadonnées d'une vidéo.
-    Body JSON : { "url": "https://..." }
-    """
     data = request.get_json(silent=True) or {}
     url  = data.get("url", "").strip()
 
@@ -68,7 +73,7 @@ def get_info():
         return jsonify({"error": "URL invalide"}), 400
 
     try:
-        yt = make_yt(url)
+        yt         = make_yt(url)
         duration_s = yt.length or 0
         duration   = f"{duration_s // 60}:{duration_s % 60:02d}"
 
@@ -79,25 +84,12 @@ def get_info():
             "uploader":  yt.author or "",
             "formats":   [],
         })
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/download", methods=["POST"])
 def download():
-    """
-    Télécharge et renvoie le fichier directement.
-    Body JSON : {
-        "url":  "https://...",
-        "mode": "auto" | "audio" | "mute"
-    }
-
-    Modes :
-      auto  -> meilleure résolution progressive (vidéo + audio, jusqu'à 1080p)
-      audio -> audio uniquement (.m4a)
-      mute  -> meilleure vidéo sans audio
-    """
     data = request.get_json(silent=True) or {}
     url  = data.get("url", "").strip()
     mode = data.get("mode", "auto")
@@ -106,23 +98,20 @@ def download():
         return jsonify({"error": "URL invalide"}), 400
 
     try:
-        yt = make_yt(url)
+        yt    = make_yt(url)
         title = yt.title or "leylay"
 
         with tempfile.TemporaryDirectory() as tmpdir:
 
             if mode == "audio":
-                # Audio uniquement (.m4a)
                 stream = yt.streams.get_audio_only()
                 if not stream:
                     return jsonify({"error": "Aucun flux audio disponible"}), 500
-
                 filepath = stream.download(output_path=tmpdir)
                 filename = safe_filename(title, "m4a")
                 mime     = "audio/mp4"
 
             elif mode == "mute":
-                # Vidéo sans audio (résolution max)
                 stream = (
                     yt.streams
                       .filter(only_video=True)
@@ -131,20 +120,19 @@ def download():
                 )
                 if not stream:
                     return jsonify({"error": "Aucun flux vidéo disponible"}), 500
-
                 filepath = stream.download(output_path=tmpdir)
                 ext      = stream.subtype or "mp4"
                 filename = safe_filename(title, ext)
                 mime     = f"video/{ext}"
 
-            else:
-                # Auto : progressive (vidéo + audio combinés)
+            else:  # auto
                 stream = yt.streams.get_highest_resolution()
+                if not stream:
+                    stream = yt.streams.filter(progressive=True).first()
                 if not stream:
                     stream = yt.streams.first()
                 if not stream:
                     return jsonify({"error": "Aucun flux disponible"}), 500
-
                 filepath = stream.download(output_path=tmpdir)
                 ext      = stream.subtype or "mp4"
                 filename = safe_filename(title, ext)
