@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import base64
 import subprocess
 import tempfile
 from flask import Flask, request, jsonify, send_file
@@ -22,6 +23,33 @@ def add_cors_headers(response):
     return response
 
 # ──────────────────────────────────────────
+# Cookies YouTube
+# ──────────────────────────────────────────
+
+COOKIES_PATH = "/tmp/yt_cookies.txt"
+
+def setup_cookies():
+    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_B64", "")
+    cookies_raw = os.environ.get("YOUTUBE_COOKIES", "")
+
+    if cookies_b64:
+        try:
+            decoded = base64.b64decode(cookies_b64).decode("utf-8")
+            with open(COOKIES_PATH, "w") as f:
+                f.write(decoded)
+            print("✅ Cookies YouTube chargés (base64)")
+        except Exception as e:
+            print(f"❌ Erreur décodage cookies : {e}")
+    elif cookies_raw:
+        with open(COOKIES_PATH, "w") as f:
+            f.write(cookies_raw)
+        print("✅ Cookies YouTube chargés (raw)")
+    else:
+        print("⚠️ Pas de cookies YouTube configurés")
+
+setup_cookies()
+
+# ──────────────────────────────────────────
 # Utilitaires
 # ──────────────────────────────────────────
 
@@ -29,24 +57,24 @@ def is_valid_url(url: str) -> bool:
     return bool(re.match(r'^https?://', url.strip()))
 
 
-# Args injectés dans chaque appel yt-dlp pour contourner la détection bot
-YTDLP_BASE = [
-    "--extractor-args", "youtube:player_client=android,web",
-    "--no-check-formats",
-    "--no-warnings",
-]
+def build_base_args() -> list:
+    """Args communs à tous les appels yt-dlp."""
+    args = [
+        "--extractor-args", "youtube:player_client=android,web",
+        "--no-check-formats",
+        "--no-warnings",
+    ]
+    if os.path.exists(COOKIES_PATH):
+        args += ["--cookies", COOKIES_PATH]
+    return args
 
 
 def run_ytdlp(args: list) -> tuple[str, str, int]:
     result = subprocess.run(
-        ["yt-dlp"] + YTDLP_BASE + args,
+        ["yt-dlp"] + build_base_args() + args,
         capture_output=True, text=True, timeout=180
     )
     return result.stdout, result.stderr, result.returncode
-
-
-def safe_filename(name: str) -> str:
-    return re.sub(r'[\\/*?:"<>|]', '', name).strip()[:100]
 
 
 # ──────────────────────────────────────────
@@ -55,7 +83,12 @@ def safe_filename(name: str) -> str:
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "leylay-backend"})
+    cookies_ok = os.path.exists(COOKIES_PATH)
+    return jsonify({
+        "status":  "ok",
+        "service": "leylay-backend",
+        "cookies": cookies_ok,
+    })
 
 
 @app.route("/info", methods=["POST"])
@@ -111,7 +144,6 @@ def download():
         elif mode == "mute":
             args += ["-f", "bestvideo[ext=mp4]/bestvideo/best", "--no-audio"]
         else:
-            # bv*+ba : meilleur vidéo + meilleur audio, fallback sur best
             args += ["-f", "bv*+ba/b", "--merge-output-format", "mp4"]
 
         args.append(url)
