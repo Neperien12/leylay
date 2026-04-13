@@ -3,7 +3,7 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "python app.py"
-gunicorn app:app --bind 0.0.0.0:$PORT
+startCommand = "gunicorn app:app --bind 0.0.0.0:$PORT"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
